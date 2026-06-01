@@ -31,7 +31,8 @@ def get_tw_ticker(raw_symbol):
     return raw_symbol
 
 # --- 2. 基礎設定 ---
-SAVE_FILE = "my_portfolio.csv"
+# 改存放在雲端伺服器的永久使用者目錄，這樣手機輸入後就會永久保留，不會隨網頁關閉而歸零
+SAVE_FILE = os.path.expanduser("~/.my_portfolio.csv")
 st.set_page_config(page_title="股票損益監測系統", layout="wide")
 
 # --- 3. 側邊欄與自動刷新 ---
