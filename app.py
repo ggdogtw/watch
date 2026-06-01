@@ -30,7 +30,7 @@ def get_tw_ticker(raw_symbol):
         return f"{raw_symbol}.TW"
     return raw_symbol
 
-# --- 2. 基礎設定 (雲端永久儲存路記) ---
+# --- 2. 基礎設定 (雲端永久儲存路徑) ---
 SAVE_FILE = os.path.expanduser("~/.my_portfolio.csv")
 
 if not os.path.exists(SAVE_FILE):
@@ -112,11 +112,9 @@ else: # 減倉模式
 # --- 5. 主畫面數據獲取 ---
 st.title(f"📈 股票損益監測看板")
 
-# 強制對齊台灣時區
-tw_tz = pytz.timezone('Asia/Taipei')
-
+# 💥 脫鉤修正：如果大盤接口塞車，自動留下一行提示並跳過，絕對不拖累下方個人庫存的載入速度
 try:
-    twii = yf.download("^TWII", period="5d", progress=False)
+    twii = yf.download("^TWII", period="5d", progress=False, timeout=3)
     if isinstance(twii.columns, pd.MultiIndex): 
         twii.columns = twii.columns.droplevel(1)
     if not twii.empty and len(twii) >= 2:
@@ -125,9 +123,9 @@ try:
         pct = (c / float(twii['Close'].iloc[-2])) * 100
         st.markdown(f"### 🇹🇼 台灣加權指數：**{p:,.2f}** <span style='color:{'#ff4b4b' if c > 0 else '#008000'}'>({'▲' if c > 0 else '▼'} {abs(c):.2f}, {pct:.2f}%)</span>", unsafe_allow_html=True)
     else:
-        st.warning("⚠️ 大盤數據非交易時段或同步中...")
+        st.info("ℹ️ 今日大盤即時流量較高，現貨加權指數快取同步中...")
 except Exception as e:
-    st.warning("⚠️ 大盤數據同步中...")
+    st.info("ℹ️ 今日大盤即時流量較高，現貨加權指數快取同步中...")
 
 st.divider()
 
@@ -137,16 +135,14 @@ if not df_portfolio.empty:
     t_mkt, t_cost, t_today, t_period = 0.0, 0.0, 0.0, 0.0
     individual_stocks_data = {}
 
-    with st.spinner('同步市場數據中...'):
+    with st.spinner('正在為您同步庫存個股市場數據...'):
         for _, row in df_portfolio.iterrows():
             try:
                 ticker = row['代號']
-                # 擴大抓取範圍至 2y，確保有足夠的交易日計算 120MA
-                df_h = yf.download(ticker, period="2y", progress=False).sort_index()
+                df_h = yf.download(ticker, period="2y", progress=False, timeout=3).sort_index()
                 if isinstance(df_h.columns, pd.MultiIndex): 
                     df_h.columns = df_h.columns.droplevel(1)
                 
-                # 關鍵修正：將時間戳強制移除時區資訊，避免與 Linux 伺服器衝突
                 df_h.index = pd.to_datetime(df_h.index).tz_localize(None)
                 
                 if not df_h.empty and len(df_h) >= 2:
