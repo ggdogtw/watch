@@ -3,23 +3,10 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import os
-import shutil
 import subprocess
 import plotly.express as px
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
-from datetime import datetime, timedelta
-
-# --- 核心修正：清理 yfinance 資料庫鎖定 ---
-def fix_yf_cache():
-    cache_dir = os.path.expanduser('~/.cache/py-yfinance')
-    try:
-        if os.path.exists(cache_dir):
-            shutil.rmtree(cache_dir) 
-    except:
-        pass
-
-fix_yf_cache()
 
 # --- 1. 核心邏輯：代號自動補全 ---
 def get_tw_ticker(raw_symbol):
@@ -30,28 +17,25 @@ def get_tw_ticker(raw_symbol):
         return f"{raw_symbol}.TW"
     return raw_symbol
 
-# --- 2. 基礎設定 (回歸當前目錄，讓手機電腦共用同一個 GitHub 檔案) ---
+# --- 2. 基礎設定 (手機/電腦雙端共用 GitHub 檔案) ---
 SAVE_FILE = "my_portfolio.csv"
 
-# 🆕 黑科技：當偵測到持倉異動時，自動在背景將 CSV 檔案 Push 回使用者的 GitHub，達成永久同步不歸零
 def sync_to_github():
     try:
-        # 在 Streamlit 雲端 Linux 環境下自動執行 Git 上傳指令
-        subprocess.run(["git", "config", "user.name", "Streamlit AutoBot"], check=True)
-        subprocess.run(["git", "config", "user.email", "bot@streamlit.app"], check=True)
-        subprocess.run(["git", "add", SAVE_FILE], check=True)
-        subprocess.run(["git", "commit", "-m", "🔄 自動同步更新持倉數據 [Streamlit Cloud]"], check=True)
-        # 雲端環境通常已帶有寫入權限，直接推回主分支
-        subprocess.run(["git", "push"], check=True)
-    except Exception as e:
-        # 如果因為權限限制無法推回，則保持本地記憶體運作，不影響網頁顯示
+        subprocess.run(["git", "config", "user.name", "Streamlit AutoBot"], check=False)
+        subprocess.run(["git", "config", "user.email", "bot@streamlit.app"], check=False)
+        subprocess.run(["git", "add", SAVE_FILE], check=False)
+        subprocess.run(["git", "commit", "-m", "🔄 自動同步更新持倉數據 [Mobile Fix]"], check=False)
+        subprocess.run(["git", "push"], check=False)
+    except:
         pass
 
 if not os.path.exists(SAVE_FILE):
     df_init = pd.DataFrame(columns=["代號", "買進單價", "股數"])
     df_init.to_csv(SAVE_FILE, index=False)
 
-st.set_page_config(page_title="股票損益監測系統", layout="wide")
+# 💥 手機版適配設定：強制網頁設定與快取優化
+st.set_page_config(page_title="股票損益監測系統", layout="wide", initial_sidebar_state="collapsed")
 
 # --- 3. 側邊欄與自動刷新 ---
 st.sidebar.header("⚙️ 系統設定")
@@ -71,6 +55,10 @@ try:
 except:
     df_portfolio = pd.DataFrame(columns=["代號", "買進單價", "股數"])
 
+# 清理因為早期誤輸入產生的不相干髒資料
+if not df_portfolio.empty:
+    df_portfolio = df_portfolio[df_portfolio["代號"].str.contains(r"\.", na=False) | df_portfolio["代號"].str.isdigit()]
+
 if mode == "➕ 新增/加碼":
     new_buy_price = st.sidebar.number_input("本次買進單價", min_value=0.0, step=0.1)
     new_shares = st.sidebar.number_input("本次買進股數", min_value=1, step=1)
@@ -86,10 +74,10 @@ if mode == "➕ 新增/加碼":
                 new_row = pd.DataFrame([[final_ticker, new_buy_price, new_shares]], columns=["代號", "買進單價", "股數"])
                 df_portfolio = pd.concat([df_portfolio, new_row], ignore_index=True)
             df_portfolio.to_csv(SAVE_FILE, index=False)
-            sync_to_github()  # 🚀 觸發自動同步
+            sync_to_github()
             st.rerun()
 
-else: # 減倉模式
+else: 
     sell_price = st.sidebar.number_input("本次賣出單價", min_value=0.0, step=0.1)
     sell_shares = st.sidebar.number_input("本次賣出股數", min_value=1, step=1)
     if st.sidebar.button("確認執行減倉"):
@@ -98,7 +86,6 @@ else: # 減倉模式
             if final_ticker in df_portfolio["代號"].values:
                 idx = df_portfolio[df_portfolio["代號"] == final_ticker].index[0]
                 current_s = df_portfolio.at[idx, "股數"]
-                buy_p = df_portfolio.at[idx, "買進單價"]
                 
                 if sell_shares >= current_s:
                     df_portfolio = df_portfolio.drop(idx)
@@ -106,14 +93,14 @@ else: # 減倉模式
                     df_portfolio.at[idx, "股數"] = current_s - sell_shares
                 
                 df_portfolio.reset_index(drop=True).to_csv(SAVE_FILE, index=False)
-                sync_to_github()  # 🚀 觸發自動同步
+                sync_to_github()
                 st.rerun()
 
 # --- 5. 主畫面標題 ---
 st.title(f"📈 股票損益監測看板")
 st.divider()
 
-# --- 6. 運算核心 (極速免塞車版) ---
+# --- 6. 運算核心 ---
 if not df_portfolio.empty:
     results = []
     t_mkt, t_cost, t_today = 0.0, 0.0, 0.0
@@ -124,7 +111,7 @@ if not df_portfolio.empty:
                 ticker = str(row['代號']).strip()
                 if not ticker or ticker == 'nan' or ticker == '代號': continue
                 
-                df_h = yf.download(ticker, period="2d", progress=False, timeout=3)
+                df_h = yf.download(ticker, period="2d", progress=False, timeout=5)
                 if isinstance(df_h.columns, pd.MultiIndex): 
                     df_h.columns = df_h.columns.droplevel(1)
                 
@@ -152,16 +139,16 @@ if not df_portfolio.empty:
                         "損益": int(val - cost),
                         "報酬%": round(((val - cost)/cost)*100, 2) if cost != 0 else 0
                     })
-            except Exception as e: 
+            except: 
                 continue
 
     if results:
         if t_cost > 0:
-            c1, c2, c3 = st.columns(3)
+            # 💥 手機版適配：將原本橫排的 3 欄改為獨立區塊，避免手機螢幕太窄字卡擠壓變形
             profit = t_mkt - t_cost
-            c1.metric("累積總損益", f"${int(profit):,}", delta=f"{(profit/t_cost)*100:.2f}%")
-            c2.metric("總市值", f"${int(t_mkt):,}")
-            c3.metric("今日總變動", f"${int(t_today):,}", delta=f"{int(t_today):,}")
+            st.metric("累積總損益", f"${int(profit):,}", delta=f"{(profit/t_cost)*100:.2f}%")
+            st.metric("總市值", f"${int(t_mkt):,}")
+            st.metric("今日總變動", f"${int(t_today):,}", delta=f"{int(t_today):,}")
 
         st.divider()
 
@@ -177,19 +164,19 @@ if not df_portfolio.empty:
 
         st.divider()
         
+        # 💥 手機版適配：強制固定圖表容器高度，防止手機瀏覽器將高度壓縮為 0
         st.write("### 🍰 現有資產配置比例")
         fig_pie = px.pie(df_res, values='市值', names='代號', hole=0.4)
-        fig_pie.update_layout(legend=dict(orientation="h", y=-0.1))
-        st.plotly_chart(fig_pie, use_container_width=True)
+        
+        # 強制指定手機友好的 RWD 參數
+        fig_pie.update_layout(
+            autosize=True,
+            height=400,  # 強制固定高度，防手機端隱形
+            margin=dict(l=20, r=20, t=20, b=20),
+            legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center")
+        )
+        st.plotly_chart(fig_pie, use_container_width=True, config={'responsive': True})
 
     # 側邊欄快速管理
     st.sidebar.divider()
-    with st.sidebar.expander("🗑️ 快速刪除標的"):
-        if not df_portfolio.empty:
-            target = st.selectbox("選取股票", options=[f"{i}: {r['代號']}" for i, r in df_portfolio.iterrows()])
-            if st.button("完全刪除該標的"):
-                df_portfolio.drop(int(target.split(":")[0])).reset_index(drop=True).to_csv(SAVE_FILE, index=False)
-                sync_to_github()  # 🚀 刪除也觸發自動同步
-                st.rerun()
-else:
-    st.info("👋 歡迎！請在左側輸入代號開始監測。")
+    with st.sidebar.expander("
