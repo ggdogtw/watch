@@ -30,9 +30,16 @@ def get_tw_ticker(raw_symbol):
         return f"{raw_symbol}.TW"
     return raw_symbol
 
-# --- 2. 基礎設定 ---
-# 改存放在雲端伺服器的永久使用者目錄，這樣手機輸入後就會永久保留，不會隨網頁關閉而歸零
+# --- 2. 基礎設定 (雲端永久儲存路記) ---
 SAVE_FILE = os.path.expanduser("~/.my_portfolio.csv")
+
+if not os.path.exists(SAVE_FILE):
+    try:
+        df_init = pd.DataFrame(columns=["代號", "買進單價", "股數"])
+        df_init.to_csv(SAVE_FILE, index=False)
+    except:
+        pass
+
 st.set_page_config(page_title="股票損益監測系統", layout="wide")
 
 # --- 3. 側邊欄與自動刷新 ---
@@ -55,10 +62,9 @@ st.sidebar.divider()
 mode = st.sidebar.radio("持倉異動模式", ["➕ 新增/加碼", "➖ 減倉/賣出"])
 input_ticker = st.sidebar.text_input("股票代號 (如 2330)")
 
-# 讀取現有資料
-if os.path.exists(SAVE_FILE):
+try:
     df_portfolio = pd.read_csv(SAVE_FILE)
-else:
+except:
     df_portfolio = pd.DataFrame(columns=["代號", "買進單價", "股數"])
 
 if mode == "➕ 新增/加碼":
@@ -103,11 +109,14 @@ else: # 減倉模式
             else:
                 st.sidebar.error("找不到該股票持倉")
 
-# --- 5. 主畫面數據獲取（純淨版：僅保留現貨加權大盤） ---
+# --- 5. 主畫面數據獲取 ---
 st.title(f"📈 股票損益監測看板")
 
+# 強制對齊台灣時區
+tw_tz = pytz.timezone('Asia/Taipei')
+
 try:
-    twii = yf.download("^TWII", period="2d", progress=False)
+    twii = yf.download("^TWII", period="5d", progress=False)
     if isinstance(twii.columns, pd.MultiIndex): 
         twii.columns = twii.columns.droplevel(1)
     if not twii.empty and len(twii) >= 2:
@@ -116,7 +125,7 @@ try:
         pct = (c / float(twii['Close'].iloc[-2])) * 100
         st.markdown(f"### 🇹🇼 台灣加權指數：**{p:,.2f}** <span style='color:{'#ff4b4b' if c > 0 else '#008000'}'>({'▲' if c > 0 else '▼'} {abs(c):.2f}, {pct:.2f}%)</span>", unsafe_allow_html=True)
     else:
-        st.warning("⚠️ 大盤數據同步中...")
+        st.warning("⚠️ 大盤數據非交易時段或同步中...")
 except Exception as e:
     st.warning("⚠️ 大盤數據同步中...")
 
@@ -132,14 +141,18 @@ if not df_portfolio.empty:
         for _, row in df_portfolio.iterrows():
             try:
                 ticker = row['代號']
-                df_h = yf.download(ticker, period="1y", progress=False).sort_index()
+                # 擴大抓取範圍至 2y，確保有足夠的交易日計算 120MA
+                df_h = yf.download(ticker, period="2y", progress=False).sort_index()
                 if isinstance(df_h.columns, pd.MultiIndex): 
                     df_h.columns = df_h.columns.droplevel(1)
+                
+                # 關鍵修正：將時間戳強制移除時區資訊，避免與 Linux 伺服器衝突
                 df_h.index = pd.to_datetime(df_h.index).tz_localize(None)
                 
                 if not df_h.empty and len(df_h) >= 2:
                     now_p = float(df_h['Close'].iloc[-1])
                     prev_p = float(df_h['Close'].iloc[-2])
+                    
                     base_df = df_h[df_h.index <= pd.Timestamp(base_date)]
                     base_p = float(base_df['Close'].iloc[-1]) if not base_df.empty else float(df_h['Close'].iloc[0])
                     
@@ -169,17 +182,17 @@ if not df_portfolio.empty:
             except Exception as e: 
                 continue
 
-    if t_cost > 0:
-        c1, c2, c3, c4 = st.columns(4)
-        profit = t_mkt - t_cost
-        c1.metric("累積總損益", f"${int(profit):,}", delta=f"{(profit/t_cost)*100:.2f}%")
-        c2.metric("總市值", f"${int(t_mkt):,}")
-        c3.metric("今日總變動", f"${int(t_today):,}", delta=f"{int(t_today):,}")
-        c4.metric("區段總變動", f"${int(t_period):,}", delta=f"{int(t_period):,}")
-
-    st.divider()
-
     if results:
+        if t_cost > 0:
+            c1, c2, c3, c4 = st.columns(4)
+            profit = t_mkt - t_cost
+            c1.metric("累積總損益", f"${int(profit):,}", delta=f"{(profit/t_cost)*100:.2f}%")
+            c2.metric("總市值", f"${int(t_mkt):,}")
+            c3.metric("今日總變動", f"${int(t_today):,}", delta=f"{int(t_today):,}")
+            c4.metric("區段總變動", f"${int(t_period):,}", delta=f"{int(t_period):,}")
+
+        st.divider()
+
         df_res = pd.DataFrame(results)
         st.write("### 📜 持倉行情明細")
         
@@ -204,7 +217,7 @@ if not df_portfolio.empty:
                     for b in [s.strip() for s in benchmark_input.split(",") if s.strip()]:
                         try:
                             bt = get_tw_ticker(b)
-                            bh = yf.download(bt, period="1y", progress=False)
+                            bh = yf.download(bt, period="2y", progress=False)
                             if isinstance(bh.columns, pd.MultiIndex): 
                                 bh.columns = bh.columns.droplevel(1)
                             if not bh.empty:
