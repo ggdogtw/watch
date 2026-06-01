@@ -82,6 +82,7 @@ if mode == "➕ 新增/加碼":
                 new_row = pd.DataFrame([[final_ticker, new_buy_price, new_shares]], columns=["代號", "買進單價", "股數"])
                 df_portfolio = pd.concat([df_portfolio, new_row], ignore_index=True)
             df_portfolio.to_csv(SAVE_FILE, index=False)
+            st.success(f"成功儲存！請關閉左側側邊欄查看主畫面。")
             st.rerun()
 
 else: # 減倉模式
@@ -97,22 +98,21 @@ else: # 減倉模式
                 
                 if sell_shares >= current_s:
                     df_portfolio = df_portfolio.drop(idx)
-                    realized_profit = (sell_price - buy_p) * current_s
-                    st.sidebar.warning(f"已全數清倉 {final_ticker}，實現損益約: ${int(realized_profit):,}")
                 else:
                     df_portfolio.at[idx, "股數"] = current_s - sell_shares
-                    realized_profit = (sell_price - buy_p) * sell_shares
-                    st.sidebar.success(f"{final_ticker} 已減倉，本次實現損益約: ${int(realized_profit):,}")
                 
                 df_portfolio.reset_index(drop=True).to_csv(SAVE_FILE, index=False)
                 st.rerun()
-            else:
-                st.sidebar.error("找不到該股票持倉")
 
 # --- 5. 主畫面數據獲取 ---
 st.title(f"📈 股票損益監測看板")
 
-# 💥 脫鉤修正：如果大盤接口塞車，自動留下一行提示並跳過，絕對不拖累下方個人庫存的載入速度
+# ℹ️ 診斷專區：直接把後台偵測到的實體資料庫狀態翻出來看
+st.info("🔍 **系統後台除錯診斷診斷**：")
+st.write(f"📁 雲端資料庫路徑：`{SAVE_FILE}`")
+st.write("📊 目前系統在該路徑內讀取到的**實際持倉清單**如下：")
+st.dataframe(df_portfolio)
+
 try:
     twii = yf.download("^TWII", period="5d", progress=False, timeout=3)
     if isinstance(twii.columns, pd.MultiIndex): 
@@ -122,10 +122,8 @@ try:
         c = p - float(twii['Close'].iloc[-2])
         pct = (c / float(twii['Close'].iloc[-2])) * 100
         st.markdown(f"### 🇹🇼 台灣加權指數：**{p:,.2f}** <span style='color:{'#ff4b4b' if c > 0 else '#008000'}'>({'▲' if c > 0 else '▼'} {abs(c):.2f}, {pct:.2f}%)</span>", unsafe_allow_html=True)
-    else:
-        st.info("ℹ️ 今日大盤即時流量較高，現貨加權指數快取同步中...")
 except Exception as e:
-    st.info("ℹ️ 今日大盤即時流量較高，現貨加權指數快取同步中...")
+    pass
 
 st.divider()
 
@@ -138,7 +136,9 @@ if not df_portfolio.empty:
     with st.spinner('正在為您同步庫存個股市場數據...'):
         for _, row in df_portfolio.iterrows():
             try:
-                ticker = row['代號']
+                ticker = str(row['代號']).strip()
+                if not ticker or ticker == 'nan': continue
+                
                 df_h = yf.download(ticker, period="2y", progress=False, timeout=3).sort_index()
                 if isinstance(df_h.columns, pd.MultiIndex): 
                     df_h.columns = df_h.columns.droplevel(1)
@@ -226,7 +226,7 @@ if not df_portfolio.empty:
                     fig.update_layout(hovermode="x unified", legend=dict(orientation="h", y=-0.2))
                     st.plotly_chart(fig, use_container_width=True)
         with col_c2:
-            st.write("### 🍰 資產配置")
+            st.write("### 🍰 資資產配置")
             st.plotly_chart(px.pie(df_res, values='市值', names='代號', hole=0.4), use_container_width=True)
 
         # --- 📈 個股均線走勢圖 ---
